@@ -1,0 +1,63 @@
+name: pdf-book-reader
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch upstream commit count
+        id: get_commit_count
+        run: |
+          # Fetch the last page number from Link header which indicates the commit count
+          count=$(curl -sI "https://api.github.com/repos/sora-teyam/pdf-book-reader/commits?per_page=1" | \
+          grep -i '^link:' | \
+          sed -En 's/.*page=([0-9]+)>; rel="last".*/\u0001/p')
+          # Fallback if only one page (count == 1)
+          if [ -z "$count" ]; then count=$(curl -s "https://api.github.com/repos/sora-teyam/pdf-book-reader/commits?per_page=1" | jq length); fi
+          echo "count=$count" >> $GITHUB_OUTPUT
+
+      - name: Checkout upstream source
+        uses: actions/checkout@v4
+        with:
+          repository: sora-teyam/pdf-book-reader
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.13.0'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Create GitHub Release with commit-count tag
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: "commit-${{ steps.get_commit_count.outputs.count }}"
+          release_name: "Auto Release (Upstream Commit ${{ steps.get_commit_count.outputs.count }})"
+          draft: false
+          prerelease: false
+
+      - name: Upload APK as release asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: build/app/outputs/flutter-apk/app-release.apk
+          asset_name: app-release.apk
+          asset_content_type: application/vnd.android.package-archive
